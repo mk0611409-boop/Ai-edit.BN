@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AI Editor Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Cairo',sans-serif;background:#0a0a0a;color:#fff;min-height:100vh}
+  .app{padding:16px;max-width:640px;margin:0 auto}
+  header{text-align:center;padding:16px 0}
+  h1{font-size:24px;color:#c9a227;font-weight:800;letter-spacing:1px}
+  .sub{font-size:12px;color:#666;margin-top:4px}
+  .card{background:rgba(20,20,20,.7);border:1px solid rgba(201,162,39,.2);border-radius:16px;padding:16px;margin-bottom:14px}
+  .card h2{font-size:13px;color:#c9a227;margin-bottom:10px;letter-spacing:1px}
+  .drop{border:2px dashed #333;border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:.2s}
+  .drop:hover,.drop.drag{border-color:#c9a227;background:rgba(201,162,39,.05)}
+  .drop p{color:#888;font-size:13px}
+  video{max-width:100%;border-radius:8px;margin-top:10px}
+  input[type=text],input[type=password]{width:100%;background:#000;border:1px solid #333;border-radius:10px;padding:10px;color:#fff;font-size:14px;margin-top:8px;font-family:inherit}
+  input:focus{outline:none;border-color:#c9a227}
+  button{background:linear-gradient(135deg,#c9a227,#8a6d0f);color:#000;border:none;border-radius:10px;padding:12px;font-weight:800;font-size:14px;width:100%;margin-top:10px;transition:.2s;cursor:pointer}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button:active{transform:scale(.97)}
+  #chat{max-height:240px;overflow-y:auto;font-size:13px;display:flex;flex-direction:column;gap:8px}
+  .msg{padding:10px 12px;border-radius:12px;line-height:1.4;word-wrap:break-word}
+  .msg.bot{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);color:#ccc;align-self:flex-start;max-width:90%}
+  .msg.user{background:rgba(201,162,39,.15);border:1px solid rgba(201,162,39,.4);align-self:flex-end;max-width:90%}
+  .msg b{color:#c9a227}
+  .row{display:flex;gap:8px;margin-top:10px}
+  .row input{flex:1;margin-top:0}
+  .row button{width:auto;padding:12px 16px;margin-top:0}
+  .progress{height:6px;background:#222;border-radius:3px;overflow:hidden;margin-top:12px}
+  .progress div{height:100%;background:linear-gradient(90deg,#c9a227,#e8cf7a);width:0;transition:width .4s}
+  .status{text-align:center;font-size:12px;color:#888;margin-top:8px}
+  #result{display:none;margin-top:14px}
+  #result a{display:block;text-align:center;color:#c9a227;font-size:13px;margin-top:8px;text-decoration:none}
+  a{color:#c9a227}
+  .success-text{color:#4ade80;font-size:11px;margin-top:6px;display:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>AI EDITOR PRO</h1>
+    <p class="sub">مونتاج تلقائي بالذكاء الاصطناعي</p>
+  </header>
+
+  <div class="card">
+    <h2>⚙️ إعدادات API</h2>
+    <input type="password" id="apiKeyInput" placeholder="sk-or-v1-...">
+    <button id="saveKeyBtn">حفظ المفتاح</button>
+    <p id="keyStatus" class="success-text">✅ تم حفظ المفتاح بنجاح</p>
+  </div>
+
+  <div class="card">
+    <h2>١. ارفع فيديوك</h2>
+    <div class="drop" id="drop">
+      <p id="dropText">اضغط لاختيار فيديو أو اسحبه هنا</p>
+      <input type="file" id="file" accept="video/*" hidden>
+      <video id="preview" controls playsinline style="display:none"></video>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>٢. المساعد</h2>
+    <div id="chat">
+      <div class="msg bot"><b>AI:</b> جاهز! اكتب أفكارك للمونتاج أو اطلب ملصقات.</div>
+    </div>
+    <div class="row">
+      <input type="text" id="chatInput" placeholder="مثال: أضف ملصق قطة سينمائي...">
+      <button id="chatSend">➤</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>٣. المونتاج (FFmpeg)</h2>
+    <button id="montageBtn" disabled>تطبيق المونتاج السينمائي</button>
+    <div class="progress" id="progWrap" style="display:none"><div id="prog"></div></div>
+    <p class="status" id="status" style="display:none"></p>
+    <div id="result">
+      <video id="output" controls playsinline></video>
+      <a id="download" download="edited.mp4">⬇ تحميل الفيديو</a>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+import { fetchFile, toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
+
+// ================== CONFIG ==================
+const TEXT_MODEL = "openrouter/free"; // موديل مجاني مستقر
+let OPENROUTER_KEY = localStorage.getItem('openrouter_key') || "";
+const $ = id => document.getElementById(id);
+
+// ================== API KEY ==================
+const apiKeyInput = $('apiKeyInput'), saveKeyBtn = $('saveKeyBtn'), keyStatus = $('keyStatus');
+if(OPENROUTER_KEY) apiKeyInput.value = OPENROUTER_KEY;
+
+saveKeyBtn.onclick = () => {
+    const key = apiKeyInput.value.trim();
+    if(!key.startsWith('sk-or-')) return alert('المفتاح غير صحيح، يجب أن يبدأ بـ sk-or-');
+    localStorage.setItem('openrouter_key', key);
+    OPENROUTER_KEY = key;
+    keyStatus.style.display = 'block';
+    setTimeout(() => keyStatus.style.display = 'none', 3000);
+};
+
+// ================== UPLOAD ==================
+const drop = $('drop'), fileInput = $('file'), preview = $('preview'), dropText = $('dropText');
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('drag'); };
+drop.ondragleave = () => drop.classList.remove('drag');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('drag'); handleFile(e.dataTransfer.files[0]); };
+fileInput.onchange = e => handleFile(e.target.files[0]);
+
+let currentVideoFile = null;
+function handleFile(f){
+  if(!f || !f.type.startsWith('video/')) return alert('اختر ملف فيديو صحيح');
+  currentVideoFile = f;
+  preview.src = URL.createObjectURL(f);
+  preview.style.display = 'block';
+  dropText.textContent = '✅ ' + f.name;
+  $('montageBtn').disabled = false;
+}
+
+// ================== CHAT ==================
+const chat = $('chat'), chatInput = $('chatInput'), chatSend = $('chatSend');
+function addMsg(who, html){
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  d.innerHTML = `<b>${who === 'bot' ? 'AI' : 'أنت'}:</b> ${html}`;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+chatSend.onclick = async () => {
+  const msg = chatInput.value.trim();
+  if(!msg) return;
+  if(!OPENROUTER_KEY) {
+    addMsg('user', msg);
+    addMsg('bot', '⚠️ الرجاء إدخال مفتاح API أولاً في الأعلى.');
+    chatInput.value = '';
+    return;
+  }
+  
+  addMsg('user', msg);
+  chatInput.value = '';
+
+  try{
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method:'POST',
+      headers:{ 
+        'Content-Type':'application/json', 
+        'Authorization': `Bearer ${OPENROUTER_KEY}`,
+        'HTTP-Referer': 'https://aieditor.app',
+        'X-Title': 'AI Editor'
+      },
+      body: JSON.stringify({
+        model: TEXT_MODEL,
+        messages: [
+          { role:'system', content:'أنت مساعد مونتاج ذكي. رد باختصار وباللغة العربية.' }, 
+          { role:'user', content: msg }
+        ]
+      })
+    });
+    const data = await res.json();
+    if(data.error) throw new Error(data.error.message);
+    
+    addMsg('bot', (data.choices[0].message.content || 'تم.').replace(/\n/g,'<br>'));
+    
+    // توليد ملصقات تلقائي
+    if (msg.includes('ملصق') || msg.includes('صورة')) {
+        const prompt = encodeURIComponent(msg.replace(/أضف|ضيف|ملصق/g, '').trim() + ", sticker, cartoon style, flat vector");
+        const url = `https://image.pollinations.ai/prompt/${prompt}?width=512&height=512&nologo=true`;
+        addMsg('bot', `🎨 تم توليد الملصق: <br><a href="${url}" target="_blank"><img src="${url}" style="width:100px; border-radius:10px; margin-top:5px;"></a>`);
+    }
+
+  }catch(e){ 
+    addMsg('bot', '⚠️ حدث خطأ: ' + e.message); 
+  }
+};
+chatInput.onkeypress = e => { if(e.key === 'Enter') chatSend.click(); };
+
+// ================== MONTAGE (FFmpeg) ==================
+let ffmpeg = null;
+const montageBtn = $('montageBtn'), progWrap = $('progWrap'), prog = $('prog'), status = $('status');
+
+function setStatus(txt, show=true){ status.textContent = txt; status.style.display = show ? 'block':'none'; }
+function setProgress(p){ progWrap.style.display='block'; prog.style.width = p + '%'; }
+
+async function loadFFmpeg() {
+  if (ffmpeg) return ffmpeg;
+  setStatus('جاري تحميل محرك المونتاج (قد يستغرق دقيقة أول مرة)...');
+  setProgress(5);
+  
+  ffmpeg = new FFmpeg();
+  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+  
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+  });
+  
+  return ffmpeg;
+}
+
+montageBtn.onclick = async () => {
+  if(!currentVideoFile) return;
+  montageBtn.disabled = true;
+  $('result').style.display = 'none';
+  
+  try {
+    const ff = await loadFFmpeg();
+    setProgress(30); setStatus('قراءة الفيديو...');
+    
+    await ff.writeFile('input.mp4', await fetchFile(currentVideoFile));
+    
+    setProgress(50); setStatus('تطبيق المؤثرات (سيمكن أن يستغرق وقتاً)...');
+    
+    // فلتر FFmpeg: تحسين الألوان والتباين
+    await ff.exec([
+      '-i', 'input.mp4',
+      '-vf', 'eq=contrast=1.1:saturation=1.2:brightness=0.05,unsharp=5:5:1.0:5:5:0.0',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26',
+      '-c:a', 'copy',
+      'output.mp4'
+    ]);
+    
+    setProgress(90); setStatus('إنهاء المعالجة...');
+    
+    const data = await ff.readFile('output.mp4');
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    
+    $('output').src = url;
+    $('download').href = url;
+    $('result').style.display = 'block';
+    setProgress(100); setStatus('✅ تم المونتاج بنجاح');
+    addMsg('bot', '✅ تم معالجة الفيديو وتطبيق التأثيرات السينمائية، يمكنك تحميله الآن.');
+    
+  } catch (e) {
+    console.error(e);
+    setStatus('❌ فشل المونتاج: ' + (e.message || 'خطأ غير معروف'));
+    addMsg('bot', '⚠️ فشل المونتاج: ' + e.message);
+  } finally {
+    montageBtn.disabled = false;
+  }
+};
+</script>
+</body>
+      </html>
